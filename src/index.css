@@ -1,0 +1,177 @@
+@import "tailwindcss";
+
+@font-face {
+  font-family: "Archivo";
+  src: url("./assets/fonts/archivo-latin.woff2") format("woff2");
+  font-weight: 400 900;
+  font-display: block;
+}
+
+:root {
+  --bg: #f2efe9;
+  --panel: rgb(247 244 238 / 0.9);
+  --ink: #141414;
+  --muted: #5e5a53;
+  --rule: #d8d2c6;
+  --soft: #e7e2d8;
+  --accent: #e36414;
+  --on-accent: #f7f3ec;
+  --action: #141414;
+  --on-action: #f7f3ec;
+  --ok: #2e6b45;
+  --warn: #8a5a12;
+  --warn-bg: #f6e6c8;
+  --error: #a63a2c;
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  --bg: #131416;
+  --panel: rgb(26 27 30 / 0.88);
+  --ink: #ece8df;
+  --muted: #a39e94;
+  --rule: #2f3034;
+  --soft: #26282c;
+  --accent: #e36414;
+  --on-accent: #f7f3ec;
+  --action: #ece8df;
+  --on-action: #131416;
+  --ok: #8cc5a0;
+  --warn: #e0b46a;
+  --warn-bg: #3a2c14;
+  --error: #ef9a8c;
+  color-scheme: dark;
+}
+
+@theme inline {
+  --font-sans: "Archivo", "Segoe UI Variable Text", "Segoe UI", sans-serif;
+  --color-bg: var(--bg);
+  --color-panel: var(--panel);
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+  --color-rule: var(--rule);
+  --color-soft: var(--soft);
+  --color-accent: var(--accent);
+  --color-on-accent: var(--on-accent);
+  --color-action: var(--action);
+  --color-on-action: var(--on-action);
+  --color-ok: var(--ok);
+  --color-warn: var(--warn);
+  --color-warn-bg: var(--warn-bg);
+  --color-error: var(--error);
+}
+
+@theme {
+  --text-caption: 13px;
+  --text-caption--line-height: 18px;
+  --text-body: 15px;
+  --text-body--line-height: 21px;
+  --text-headline: 40px;
+  --text-headline--line-height: 40px;
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  html,
+  body {
+    margin: 0;
+    overflow: hidden;
+    @apply bg-bg font-sans text-body text-ink select-none;
+    font-variant-numeric: tabular-nums;
+    transition: background-color 0.2s;
+  }
+
+  ::-webkit-scrollbar {
+    display: none;
+  }
+
+  ::selection {
+    background: var(--accent);
+    color: var(--on-accent);
+  }
+
+  button:not(:disabled) {
+    cursor: pointer;
+  }
+
+  input {
+    user-select: text;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--ink);
+    outline-offset: 2px;
+    border-radius: 3px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      transition-duration: 0.01ms !important;
+      animation-duration: 0.01ms !important;
+    }
+  }
+}
+
+/* Layer slider */
+.layer-range {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 28px;
+  background: transparent;
+  cursor: pointer;
+}
+.layer-range:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+.layer-range::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 2px;
+  background: linear-gradient(to right, var(--accent) var(--fill, 0%), var(--rule) var(--fill, 0%));
+}
+.layer-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  margin-top: -7px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--bg);
+  border: 2px solid var(--ink);
+  transition: transform 0.15s;
+}
+.layer-range:not(:disabled):hover::-webkit-slider-thumb {
+  transform: scale(1.12);
+}
+.layer-range:focus-visible {
+  outline: none;
+}
+.layer-range:focus-visible::-webkit-slider-thumb {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+
+@keyframes pulse-dot {
+  50% {
+    opacity: 0.35;
+  }
+}
+.animate-pulse-dot {
+  animation: pulse-dot 1.2s ease-in-out infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.animate-spin-slow {
+  animation: spin 0.9s linear infinite;
+}
