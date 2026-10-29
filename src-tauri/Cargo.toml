@@ -1,5 +1,5 @@
 [package]
-name = "layer-watch"
+name = "layerly"
 version = "0.1.0"
 description = "Live 3D layer view of a Bambu Lab print over LAN"
 authors = ["Aman"]
@@ -7,7 +7,7 @@ edition = "2024"
 
 [lib]
 # The `_lib` suffix keeps the lib name distinct from the bin name on Windows.
-name = "layer_watch_lib"
+name = "layerly_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

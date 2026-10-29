@@ -225,7 +225,7 @@ fn client_id() -> String {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
-    format!("layer-watch-{:x}-{:x}", std::process::id(), nanos & 0xffff_ffff)
+    format!("layerly-{:x}-{:x}", std::process::id(), nanos & 0xffff_ffff)
 }
 
 fn options(settings: &Settings) -> MqttOptions {

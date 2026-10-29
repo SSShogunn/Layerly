@@ -101,7 +101,7 @@ fn test_notification(app: AppHandle) -> Result<(), String> {
     app.notification()
         .builder()
         .title("Notifications are on")
-        .body("You'll hear from Layer Watch at 25%, 50% and 75%, and when a print finishes.")
+        .body("You'll hear from Layerly at 25%, 50% and 75%, and when a print finishes.")
         .show()
         .map_err(|e| e.to_string())
 }
@@ -132,5 +132,5 @@ pub fn run() {
             test_notification
         ])
         .run(tauri::generate_context!())
-        .expect("error while running Layer Watch");
+        .expect("error while running Layerly");
 }
