@@ -23,7 +23,8 @@ A1 mini; other Bambu printers that speak the same LAN protocol should work.
    from Settings → Device.
 3. Open Layerly and enter the three values in the settings dialog.
 
-Your computer and the printer must be on the same network.
+Your computer and the printer must be on the same network. If the printer's IP address
+changes, Layerly finds it again by serial number and saves the new address.
 
 ## Development
 

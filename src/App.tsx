@@ -305,7 +305,17 @@ export default function App() {
               {busy === "fetch" ? <Spinner /> : <Icon.Download />}
               {busy === "fetch" ? "Downloading…" : "Get from printer"}
             </Button>
-            <IconButton label="Printer settings" boxed onClick={() => setSettingsOpen(true)}>
+            <IconButton
+              label="Printer settings"
+              boxed
+              onClick={() => {
+                // Re-read: the IP may have been updated after finding the printer on the network.
+                invoke<Settings>("get_settings")
+                  .then(setSettings)
+                  .catch(() => {})
+                  .finally(() => setSettingsOpen(true));
+              }}
+            >
               <Icon.Gear />
             </IconButton>
           </div>

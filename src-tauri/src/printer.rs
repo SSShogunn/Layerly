@@ -26,6 +26,8 @@ use crate::settings::Settings;
 
 const PORT: u16 = 8883;
 const RETRY: Duration = Duration::from_secs(5);
+/// How often to scan the network for a printer that changed IP address.
+const SCAN_EVERY: Duration = Duration::from_secs(30);
 const MAX_INCOMING: usize = 4 * 1024 * 1024;
 const PUSHALL: &str = r#"{"pushing":{"sequence_id":"0","command":"pushall","version":1,"push_target":1}}"#;
 
@@ -237,7 +239,8 @@ fn options(settings: &Settings) -> MqttOptions {
     o
 }
 
-async fn run(app: AppHandle, inner: Shared, settings: Settings) {
+async fn run(app: AppHandle, inner: Shared, mut settings: Settings) {
+    let mut last_scan: Option<std::time::Instant> = None;
     let report = format!("device/{}/report", settings.serial);
     let request = format!("device/{}/request", settings.serial);
     loop {
@@ -249,6 +252,7 @@ async fn run(app: AppHandle, inner: Shared, settings: Settings) {
         }
         let mut connected = false;
         let mut got_report = false;
+        let mut rejected = false;
         let error = loop {
             match events.poll().await {
                 Ok(Event::Incoming(Packet::ConnAck(_))) => {
@@ -275,6 +279,7 @@ async fn run(app: AppHandle, inner: Shared, settings: Settings) {
                 Ok(_) => {}
                 Err(e) => {
                     log::warn!("mqtt: {e}");
+                    rejected = matches!(e, ConnectionError::ConnectionRefused(_));
                     break describe(&e, &settings.host, connected && !got_report);
                 }
             }
@@ -284,6 +289,22 @@ async fn run(app: AppHandle, inner: Shared, settings: Settings) {
             i.connection = "error";
             i.error = Some(error);
         });
+        // The printer may have a new IP address (DHCP). Look for it by serial number.
+        let scan_due = last_scan.is_none_or(|t| t.elapsed() >= SCAN_EVERY);
+        if !connected && !rejected && scan_due {
+            last_scan = Some(std::time::Instant::now());
+            let (serial, host) = (settings.serial.clone(), settings.host.clone());
+            let found = tauri::async_runtime::spawn_blocking(move || crate::discover::find(&serial, &host))
+                .await
+                .ok()
+                .flatten();
+            if let Some(ip) = found.filter(|ip| *ip != settings.host) {
+                log::info!("printer moved from {} to {ip}", settings.host);
+                settings.host = ip.clone();
+                crate::remember_host(&app, &ip);
+                continue;
+            }
+        }
         // Keep showing the error while retrying; ConnAck switches to "connected".
         tokio::time::sleep(RETRY).await;
     }

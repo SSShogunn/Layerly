@@ -6,6 +6,7 @@
 |---|---|
 | `src-tauri/src/printer.rs` | MQTT connection, merged printer state, `"status"` events, commands |
 | `src-tauri/src/notify.rs` | Decides when to send progress / finish / pause / fail notifications |
+| `src-tauri/src/discover.rs` | Finds the printer by serial number when its IP address changes |
 | `src-tauri/src/ftp.rs` | Minimal FTPS client that downloads the current job |
 | `src-tauri/src/gcode.rs` | Parses G-code into layered extrusion segments (binary model) |
 | `src-tauri/src/settings.rs` | Printer settings stored as JSON in the app config folder |
@@ -46,6 +47,9 @@ Layer 0 is everything before `M73 L1` (start G-code, purge line).
   `pushall` to get the full state. Reports are partial `print` objects, deep-merged.
 - **Certificate**: self-signed X.509 **v1**, which rustls can't parse. Verification is
   skipped, and handshake signature checks fall back when the cert can't be parsed.
+- **IP changes**: if connecting fails, the /24 subnet is scanned for port 8883 and the
+  printer whose TLS certificate contains the serial number is used; the new IP is saved.
+  (Bambu's UDP broadcast on port 2021 is usually blocked by the Windows firewall.)
 - **FTPS**: implicit TLS on port 990, same credentials. The data channel must resume the
   control connection's TLS session. Jobs live at `/{name}.gcode.3mf` or `/cache/...`.
 - **Not available on A1 mini**: nozzle X/Y/Z position, and `mc_print_line_number`

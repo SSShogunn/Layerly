@@ -1,3 +1,4 @@
+mod discover;
 mod ftp;
 mod gcode;
 mod notify;
@@ -104,6 +105,16 @@ fn test_notification(app: AppHandle) -> Result<(), String> {
         .body("You'll hear from Layerly at 25%, 50% and 75%, and when a print finishes.")
         .show()
         .map_err(|e| e.to_string())
+}
+
+/// Saves a new printer address found on the network.
+pub(crate) fn remember_host(app: &AppHandle, host: &str) {
+    let state = app.state::<AppState>();
+    let mut settings = state.settings.lock().unwrap();
+    settings.host = host.to_string();
+    if let Err(e) = settings::save(&state.settings_path, &settings) {
+        log::warn!("{e}");
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
