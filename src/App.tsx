@@ -2,12 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
-import type { Model, Settings, Status } from "./types";
+import type { DownloadProgress as Progress, Model, Settings, Status } from "./types";
 import { decodeModel } from "./gcode";
 import { Viewer, type ColorMode } from "./viewer";
 import { StatusCard } from "./components/StatusCard";
 import { BottomBar } from "./components/BottomBar";
 import { SettingsDialog } from "./components/SettingsDialog";
+import { DownloadProgress, downloadPercent } from "./components/DownloadProgress";
 import { Button, Icon, IconButton, Panel, Spinner } from "./components/ui";
 import { ACTIVE_STATES, errorText, fileStem } from "./components/lib";
 
@@ -60,6 +61,8 @@ export default function App() {
   const [model, setModel] = useState<Model | null>(null);
   const [busy, setBusy] = useState<Busy>(null);
   const [error, setError] = useState<string | null>(null);
+  const [progress, setProgress] = useState<Progress | null>(null);
+  const [startedAt, setStartedAt] = useState(0);
   const [autoHint, setAutoHint] = useState<string | null>(null);
   const [live, setLive] = useState(true);
   const [scrub, setScrub] = useState(0);
@@ -95,6 +98,12 @@ export default function App() {
     listen<Status>("status", (e) => setStatus(e.payload))
       .then((fn) => (cancelled ? fn() : (unlisten = fn)))
       .catch(() => {});
+    let unlistenProgress: (() => void) | undefined;
+    listen<Progress>("download-progress", (e) => {
+      if (busyRef.current === "fetch") setProgress(e.payload);
+    })
+      .then((fn) => (cancelled ? fn() : (unlistenProgress = fn)))
+      .catch(() => {});
     invoke<Status>("get_status")
       .then((s) => !cancelled && setStatus(s))
       .catch(() => {});
@@ -111,6 +120,7 @@ export default function App() {
     return () => {
       cancelled = true;
       unlisten?.();
+      unlistenProgress?.();
     };
   }, []);
 
@@ -126,6 +136,8 @@ export default function App() {
       if (busyRef.current) return;
       busyRef.current = "fetch";
       setBusy("fetch");
+      setProgress(null);
+      setStartedAt(performance.now());
       if (!auto) setError(null);
       const jobName = statusRef.current.jobName;
       if (jobName) attempted.current.add(jobName);
@@ -271,10 +283,17 @@ export default function App() {
 
       {busy && !model && (
         <div className="pointer-events-none absolute inset-0 grid place-items-center">
-          <div className="flex items-center gap-2 text-body font-semibold text-muted">
-            <Spinner />
-            {busy === "fetch" ? "Downloading the job from the printer…" : "Reading the file…"}
-          </div>
+          {busy === "fetch" ? (
+            <div className="flex flex-col items-center gap-3">
+              <p className="text-body font-semibold text-muted">Downloading the job from the printer…</p>
+              <DownloadProgress progress={progress} startedAt={startedAt} width="w-[300px]" />
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 text-body font-semibold text-muted">
+              <Spinner />
+              Reading the file…
+            </div>
+          )}
         </div>
       )}
 
@@ -303,7 +322,11 @@ export default function App() {
               title={canFetch ? "Download the current job's file from the printer" : "No job on the printer"}
             >
               {busy === "fetch" ? <Spinner /> : <Icon.Download />}
-              {busy === "fetch" ? "Downloading…" : "Get from printer"}
+              {busy === "fetch"
+                ? downloadPercent(progress) !== null
+                  ? `Downloading ${downloadPercent(progress)}%`
+                  : "Downloading…"
+                : "Get from printer"}
             </Button>
             <IconButton
               label="Printer settings"
@@ -319,6 +342,12 @@ export default function App() {
               <Icon.Gear />
             </IconButton>
           </div>
+
+          {busy === "fetch" && model && (
+            <div className="rounded-[4px] bg-panel px-2.5 py-2 backdrop-blur-md">
+              <DownloadProgress progress={progress} startedAt={startedAt} />
+            </div>
+          )}
 
           {model && (
             <div className="rounded-[4px] bg-panel px-2.5 py-1 text-caption backdrop-blur-md">

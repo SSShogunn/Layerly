@@ -447,7 +447,7 @@ mod tests {
             }
         });
         let job = text(&print, "subtask_name").expect("job");
-        let file = crate::ftp::download_job(&s, &job).unwrap();
+        let file = crate::ftp::download_job(&s, &job, &mut |_, _| {}).unwrap();
         let gcode = crate::gcode::load_bytes(file, text(&print, "gcode_file").as_deref()).unwrap();
         let layer = num(&print, "layer_num").unwrap() as i64;
         for (i, l) in gcode.lines().enumerate() {

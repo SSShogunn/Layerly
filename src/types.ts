@@ -47,3 +47,10 @@ export interface Model {
   /** Low 4 bits: feature id (FEATURES). High 4 bits: tool index. */
   feature: Uint8Array;
 }
+
+/** `"download-progress"` event while fetching the job from the printer. */
+export interface DownloadProgress {
+  received: number;
+  /** Null when the printer doesn't report the file size. */
+  total: number | null;
+}

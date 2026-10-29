@@ -12,7 +12,7 @@ use printer::{Printer, Status};
 use settings::Settings;
 use tauri::ipc::Response;
 use serde_json::json;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_notification::NotificationExt;
 
 struct AppState {
@@ -61,7 +61,7 @@ async fn load_gcode(path: String, plate: Option<String>) -> Result<Response, Str
 }
 
 #[tauri::command]
-async fn fetch_job_gcode(state: State<'_, AppState>) -> Result<Response, String> {
+async fn fetch_job_gcode(app: AppHandle, state: State<'_, AppState>) -> Result<Response, String> {
     let settings = state.settings.lock().unwrap().clone();
     if !settings.is_complete() {
         return Err("Set up the printer connection first.".into());
@@ -70,7 +70,16 @@ async fn fetch_job_gcode(state: State<'_, AppState>) -> Result<Response, String>
     let job = status.job_name.ok_or("The printer has no print job right now.")?;
     let plate = status.gcode_file;
     let bytes = blocking(move || {
-        let file = ftp::download_job(&settings, &job)?;
+        // Mirrors `DownloadProgress` in `src/types.ts`. Sent at most every 100 ms.
+        let mut last_sent: Option<std::time::Instant> = None;
+        let mut report = |received: u64, total: Option<u64>| {
+            let done = total.is_some_and(|t| received >= t);
+            if done || last_sent.is_none_or(|t| t.elapsed().as_millis() >= 100) {
+                last_sent = Some(std::time::Instant::now());
+                let _ = app.emit("download-progress", json!({ "received": received, "total": total }));
+            }
+        };
+        let file = ftp::download_job(&settings, &job, &mut report)?;
         let text = gcode::load_bytes(file, plate.as_deref())?;
         Ok(model_bytes(&text))
     })

@@ -28,9 +28,16 @@ const READ_TIMEOUT: Duration = Duration::from_secs(30);
 const PRELIM_TIMEOUT: Duration = Duration::from_secs(4);
 const MAX_FILE: usize = 512 * 1024 * 1024;
 
+/// Called with (bytes received, total bytes if known) while downloading.
+pub type Progress<'a> = &'a mut dyn FnMut(u64, Option<u64>);
+
 /// Downloads the current job's `.gcode.3mf` (or `.gcode`) from the printer.
 /// Blocking; run it on a blocking thread.
-pub fn download_job(settings: &crate::settings::Settings, job_name: &str) -> Result<Vec<u8>, String> {
+pub fn download_job(
+    settings: &crate::settings::Settings,
+    job_name: &str,
+    progress: Progress,
+) -> Result<Vec<u8>, String> {
     let host = settings.host.trim();
     if host.is_empty() {
         return Err("Printer IP address is not set".into());
@@ -44,12 +51,12 @@ pub fn download_job(settings: &crate::settings::Settings, job_name: &str) -> Res
     }
 
     let mut ftp = Ftp::connect(host, settings.access_code.trim())?;
-    let result = find_and_fetch(&mut ftp, job);
+    let result = find_and_fetch(&mut ftp, job, progress);
     ftp.quit();
     result
 }
 
-fn find_and_fetch(ftp: &mut Ftp, job: &str) -> Result<Vec<u8>, String> {
+fn find_and_fetch(ftp: &mut Ftp, job: &str, progress: Progress) -> Result<Vec<u8>, String> {
     let stem = strip_ext(job);
     let mut tried: Vec<String> = Vec::new();
     if stem.len() != job.len() {
@@ -70,7 +77,7 @@ fn find_and_fetch(ftp: &mut Ftp, job: &str) -> Result<Vec<u8>, String> {
     }
 
     for path in &tried {
-        if let Some(data) = ftp.retr(path)? {
+        if let Some(data) = ftp.retr(path, progress)? {
             return Ok(data);
         }
     }
@@ -102,7 +109,7 @@ fn find_and_fetch(ftp: &mut Ftp, job: &str) -> Result<Vec<u8>, String> {
     // Prefer newest; on ties prefer .3mf over plain .gcode.
     candidates.sort_by_key(|(p, t)| (std::cmp::Reverse(*t), !p.to_lowercase().ends_with(".3mf")));
     for (path, _) in &candidates {
-        if let Some(data) = ftp.retr(path)? {
+        if let Some(data) = ftp.retr(path, progress)? {
             return Ok(data);
         }
     }
@@ -273,7 +280,7 @@ impl Ftp {
 
     /// Runs a transfer command (RETR/LIST) and returns the data, or `None` if the
     /// server answered with a "file not found"-style error.
-    fn transfer(&mut self, command: &str) -> Result<Option<Vec<u8>>, String> {
+    fn transfer(&mut self, command: &str, on_data: &mut dyn FnMut(u64)) -> Result<Option<Vec<u8>>, String> {
         let sock = self.open_data()?;
         self.send(command)?;
 
@@ -313,6 +320,7 @@ impl Ftp {
                 Ok(0) => break,
                 Ok(n) => {
                     out.extend_from_slice(&buf[..n]);
+                    on_data(out.len() as u64);
                     if out.len() > MAX_FILE {
                         return Err("The job file on the printer is unexpectedly large".into());
                     }
@@ -337,13 +345,21 @@ impl Ftp {
         Ok(Some(out))
     }
 
-    fn retr(&mut self, path: &str) -> Result<Option<Vec<u8>>, String> {
-        log::debug!("ftp: RETR {path}");
-        self.transfer(&format!("RETR {path}"))
+    fn retr(&mut self, path: &str, progress: Progress) -> Result<Option<Vec<u8>>, String> {
+        // SIZE gives the total for the progress bar, and skips missing files
+        // without opening a data connection.
+        let total = match self.cmd(&format!("SIZE {path}"))? {
+            r if r.code == 213 => r.text.get(4..).and_then(|t| t.trim().parse::<u64>().ok()),
+            r if r.code == 550 => return Ok(None),
+            _ => None,
+        };
+        log::debug!("ftp: RETR {path} ({total:?} bytes)");
+        progress(0, total);
+        self.transfer(&format!("RETR {path}"), &mut |n| progress(n, total))
     }
 
     fn list(&mut self, dir: &str) -> Result<Option<Vec<Entry>>, String> {
-        let Some(raw) = self.transfer(&format!("LIST {dir}"))? else { return Ok(None) };
+        let Some(raw) = self.transfer(&format!("LIST {dir}"), &mut |_| {})? else { return Ok(None) };
         Ok(Some(String::from_utf8_lossy(&raw).lines().filter_map(parse_list_line).collect()))
     }
 
@@ -538,5 +554,43 @@ mod tests {
         assert_eq!(e.name, "My Part v2.gcode.3mf");
         assert!(!e.is_dir);
         assert!(parse_list_line("total 3").is_none());
+    }
+
+    /// Times each step of a real download.
+    /// LW_SETTINGS=path/to/settings.json cargo test --release timing -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn timing_live() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let s = crate::settings::load(std::path::Path::new(&std::env::var("LW_SETTINGS").unwrap()));
+        let t = std::time::Instant::now();
+        let lap = |what: &str| println!("{:>6.2}s {what}", t.elapsed().as_secs_f64());
+        let mut ftp = Ftp::connect(&s.host, &s.access_code).unwrap();
+        lap("connected + logged in");
+        let entries = ftp.list("/").unwrap().unwrap();
+        lap("LIST /");
+        let newest = entries.iter().filter(|e| e.name.ends_with(".3mf")).max_by_key(|e| e.time_key).unwrap();
+        let path = format!("/{}", newest.name);
+        let r = ftp.cmd(&format!("SIZE {path}")).unwrap();
+        lap(&format!("SIZE -> {}", r.code));
+        let r = ftp.cmd("SIZE /does-not-exist.3mf").unwrap();
+        lap(&format!("SIZE missing -> {}", r.code));
+        let miss = ftp.retr("/does-not-exist.3mf", &mut |_, _| {}).unwrap();
+        lap(&format!("RETR missing -> {:?}", miss.map(|d| d.len())));
+        let mut last = 0;
+        let data = ftp
+            .retr(&path, &mut |n, total| {
+                if n >= last + 100_000 {
+                    last = n;
+                    println!("        {n} / {total:?}");
+                }
+            })
+            .unwrap()
+            .unwrap();
+        lap(&format!("RETR {} KB", data.len() / 1024));
+        let text = crate::gcode::load_bytes(data, None).unwrap();
+        lap("unzip");
+        let _ = crate::gcode::parse(&text).to_bytes();
+        lap("parse");
     }
 }
