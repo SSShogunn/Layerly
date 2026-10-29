@@ -27,6 +27,9 @@ const READ_TIMEOUT: Duration = Duration::from_secs(30);
 /// the data-channel TLS handshake first.
 const PRELIM_TIMEOUT: Duration = Duration::from_secs(4);
 const MAX_FILE: usize = 512 * 1024 * 1024;
+/// The printer sometimes drops the connection mid-download (busy Wi-Fi while
+/// printing). Reconnect and resume this many times before giving up.
+const ATTEMPTS: u64 = 4;
 
 /// Called with (bytes received, total bytes if known) while downloading.
 pub type Progress<'a> = &'a mut dyn FnMut(u64, Option<u64>);
@@ -50,13 +53,59 @@ pub fn download_job(
         return Err("The printer isn't reporting a print job name".into());
     }
 
-    let mut ftp = Ftp::connect(host, settings.access_code.trim())?;
-    let result = find_and_fetch(&mut ftp, job, progress);
-    ftp.quit();
-    result
+    let mut partial = Partial::default();
+    let mut error = String::new();
+    for attempt in 0..ATTEMPTS {
+        if attempt > 0 {
+            log::warn!("ftp: attempt {attempt} failed ({error}); retrying");
+            std::thread::sleep(Duration::from_secs(2 * attempt));
+        }
+        let mut ftp = match Ftp::connect(host, settings.access_code.trim()) {
+            Ok(ftp) => ftp,
+            Err(e) if e.contains("access code") => return Err(e),
+            Err(e) => {
+                error = e;
+                continue;
+            }
+        };
+        let result = find_and_fetch(&mut ftp, job, &mut partial, progress);
+        ftp.quit();
+        match result {
+            Ok(()) => return Ok(partial.data),
+            Err(Fail::NotFound(e)) => return Err(e),
+            Err(Fail::Io(e)) => error = e,
+        }
+    }
+    Err(format!("{error} (tried {ATTEMPTS} times)"))
 }
 
-fn find_and_fetch(ftp: &mut Ftp, job: &str, progress: Progress) -> Result<Vec<u8>, String> {
+/// What has been downloaded so far, kept across reconnects to resume with REST.
+#[derive(Default)]
+struct Partial {
+    path: Option<String>,
+    data: Vec<u8>,
+}
+
+enum Fail {
+    /// The job file isn't on the printer: retrying won't help.
+    NotFound(String),
+    /// Connection trouble: worth retrying.
+    Io(String),
+}
+
+impl From<String> for Fail {
+    fn from(e: String) -> Fail {
+        Fail::Io(e)
+    }
+}
+
+fn find_and_fetch(ftp: &mut Ftp, job: &str, partial: &mut Partial, progress: Progress) -> Result<(), Fail> {
+    // Resuming: go straight back to the file we were downloading.
+    if let Some(path) = partial.path.clone() {
+        if ftp.retr(&path, partial, progress)? {
+            return Ok(());
+        }
+    }
     let stem = strip_ext(job);
     let mut tried: Vec<String> = Vec::new();
     if stem.len() != job.len() {
@@ -77,8 +126,8 @@ fn find_and_fetch(ftp: &mut Ftp, job: &str, progress: Progress) -> Result<Vec<u8
     }
 
     for path in &tried {
-        if let Some(data) = ftp.retr(path, progress)? {
-            return Ok(data);
+        if ftp.retr(path, partial, progress)? {
+            return Ok(());
         }
     }
 
@@ -109,15 +158,15 @@ fn find_and_fetch(ftp: &mut Ftp, job: &str, progress: Progress) -> Result<Vec<u8
     // Prefer newest; on ties prefer .3mf over plain .gcode.
     candidates.sort_by_key(|(p, t)| (std::cmp::Reverse(*t), !p.to_lowercase().ends_with(".3mf")));
     for (path, _) in &candidates {
-        if let Some(data) = ftp.retr(path, progress)? {
-            return Ok(data);
+        if ftp.retr(path, partial, progress)? {
+            return Ok(());
         }
     }
 
-    Err(format!(
+    Err(Fail::NotFound(format!(
         "Job file not found on the printer (looked for {}, and for files starting with \"{stem}\" in / and /cache)",
         tried.join(", ")
-    ))
+    )))
 }
 
 fn strip_ext(name: &str) -> &str {
@@ -278,9 +327,9 @@ impl Ftp {
         })
     }
 
-    /// Runs a transfer command (RETR/LIST) and returns the data, or `None` if the
-    /// server answered with a "file not found"-style error.
-    fn transfer(&mut self, command: &str, on_data: &mut dyn FnMut(u64)) -> Result<Option<Vec<u8>>, String> {
+    /// Runs a transfer command (RETR/LIST), appending the data to `out`. Returns
+    /// false if the server answered with a "file not found"-style error.
+    fn transfer(&mut self, command: &str, out: &mut Vec<u8>, on_data: &mut dyn FnMut(u64)) -> Result<bool, String> {
         let sock = self.open_data()?;
         self.send(command)?;
 
@@ -313,7 +362,6 @@ impl Ftp {
             k => log::warn!("ftp: data channel did NOT resume the TLS session ({k:?})"),
         }
 
-        let mut out = Vec::new();
         let mut buf = vec![0u8; 64 * 1024];
         loop {
             match data.read(&mut buf) {
@@ -342,24 +390,54 @@ impl Ftp {
         if done.code >= 400 {
             return Err(format!("Download from the printer didn't complete: {}", done.text));
         }
-        Ok(Some(out))
+        Ok(true)
     }
 
-    fn retr(&mut self, path: &str, progress: Progress) -> Result<Option<Vec<u8>>, String> {
+    /// Downloads `path` into `partial.data`, resuming from where an earlier
+    /// attempt stopped. Returns false if the file isn't there.
+    fn retr(&mut self, path: &str, partial: &mut Partial, progress: Progress) -> Result<bool, String> {
         // SIZE gives the total for the progress bar, and skips missing files
         // without opening a data connection.
         let total = match self.cmd(&format!("SIZE {path}"))? {
             r if r.code == 213 => r.text.get(4..).and_then(|t| t.trim().parse::<u64>().ok()),
-            r if r.code == 550 => return Ok(None),
+            r if r.code == 550 => return Ok(false),
             _ => None,
         };
+        if partial.path.as_deref() != Some(path) {
+            partial.path = Some(path.to_string());
+            partial.data.clear();
+        }
+        if !partial.data.is_empty() {
+            let r = self.cmd(&format!("REST {}", partial.data.len()))?;
+            if r.code == 350 {
+                log::info!("ftp: resuming {path} at {} bytes", partial.data.len());
+            } else {
+                partial.data.clear();
+            }
+        }
         log::debug!("ftp: RETR {path} ({total:?} bytes)");
-        progress(0, total);
-        self.transfer(&format!("RETR {path}"), &mut |n| progress(n, total))
+        progress(partial.data.len() as u64, total);
+        if !self.transfer(&format!("RETR {path}"), &mut partial.data, &mut |n| progress(n, total))? {
+            partial.path = None;
+            partial.data.clear();
+            return Ok(false);
+        }
+        if let Some(total) = total {
+            if (partial.data.len() as u64) < total {
+                return Err(format!(
+                    "Download from the printer stopped early ({} of {total} bytes)",
+                    partial.data.len()
+                ));
+            }
+        }
+        Ok(true)
     }
 
     fn list(&mut self, dir: &str) -> Result<Option<Vec<Entry>>, String> {
-        let Some(raw) = self.transfer(&format!("LIST {dir}"), &mut |_| {})? else { return Ok(None) };
+        let mut raw = Vec::new();
+        if !self.transfer(&format!("LIST {dir}"), &mut raw, &mut |_| {})? {
+            return Ok(None);
+        }
         Ok(Some(String::from_utf8_lossy(&raw).lines().filter_map(parse_list_line).collect()))
     }
 
@@ -373,9 +451,9 @@ impl Ftp {
     }
 }
 
-fn transfer_error(r: &Reply) -> Result<Option<Vec<u8>>, String> {
+fn transfer_error(r: &Reply) -> Result<bool, String> {
     match r.code {
-        550 | 450 | 553 => Ok(None),
+        550 | 450 | 553 => Ok(false),
         425 | 522 => Err(format!(
             "Printer refused the data connection (TLS session reuse problem?): {}",
             r.text
@@ -575,18 +653,25 @@ mod tests {
         lap(&format!("SIZE -> {}", r.code));
         let r = ftp.cmd("SIZE /does-not-exist.3mf").unwrap();
         lap(&format!("SIZE missing -> {}", r.code));
-        let miss = ftp.retr("/does-not-exist.3mf", &mut |_, _| {}).unwrap();
-        lap(&format!("RETR missing -> {:?}", miss.map(|d| d.len())));
+        let miss = ftp.retr("/does-not-exist.3mf", &mut Partial::default(), &mut |_, _| {}).unwrap();
+        lap(&format!("RETR missing -> {miss}"));
         let mut last = 0;
-        let data = ftp
-            .retr(&path, &mut |n, total| {
-                if n >= last + 100_000 {
-                    last = n;
-                    println!("        {n} / {total:?}");
-                }
-            })
-            .unwrap()
-            .unwrap();
+        let mut partial = Partial::default();
+        ftp.retr(&path, &mut partial, &mut |n, total| {
+            if n >= last + 100_000 {
+                last = n;
+                println!("        {n} / {total:?}");
+            }
+        })
+        .unwrap();
+        lap("full download");
+        // Resume check: drop the second half and fetch it again with REST.
+        let full = partial.data.clone();
+        partial.data.truncate(full.len() / 2);
+        ftp.retr(&path, &mut partial, &mut |_, _| {}).unwrap();
+        lap("resumed second half");
+        assert_eq!(partial.data, full, "resumed download differs");
+        let data = partial.data;
         lap(&format!("RETR {} KB", data.len() / 1024));
         let text = crate::gcode::load_bytes(data, None).unwrap();
         lap("unzip");

@@ -147,14 +147,14 @@ export default function App() {
       setProgress(null);
       setStartedAt(performance.now());
       if (!auto) setError(null);
+      setAutoHint(null);
       const jobName = statusRef.current.jobName;
       if (jobName) attempted.current.add(jobName);
       try {
         const buf = await invoke<ArrayBuffer>("fetch_job_gcode");
         showModel(decodeModel(buf, jobName || "Printer job"));
       } catch (e) {
-        if (auto) setAutoHint(errorText(e));
-        else setError(errorText(e));
+        setAutoHint(errorText(e));
       } finally {
         busyRef.current = null;
         setBusy(null);
@@ -384,8 +384,18 @@ export default function App() {
           {autoHint && !error && (
             <Panel className="flex items-start gap-2 p-3 text-caption">
               <div className="min-w-0 flex-1">
-                <div className="font-semibold">Couldn't download the job from the printer — open the sliced file instead</div>
+                <div className="font-semibold">Couldn't download the job from the printer</div>
                 <div className="mt-0.5 text-muted">{autoHint}</div>
+                <div className="mt-2.5 flex gap-2">
+                  <Button className="h-8" onClick={() => fetchFromPrinter(false)} disabled={!!busy || !canFetch}>
+                    <Icon.Reset />
+                    Try again
+                  </Button>
+                  <Button className="h-8" onClick={openFile} disabled={!!busy}>
+                    <Icon.Folder />
+                    Open the file instead
+                  </Button>
+                </div>
               </div>
               <button type="button" aria-label="Dismiss" className="shrink-0 text-muted hover:text-ink" onClick={() => setAutoHint(null)}>
                 <Icon.Close />
