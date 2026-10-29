@@ -1,6 +1,6 @@
 import { useState, type CSSProperties } from "react";
 import { FEATURES } from "../gcode";
-import type { ColorMode } from "../viewer";
+import type { ColorMode, RulerUnit } from "../viewer";
 import { cx } from "./lib";
 import { Button, Icon, IconButton, Panel, Toggle } from "./ui";
 
@@ -12,6 +12,8 @@ export function BottomBar(props: {
   colorMode: ColorMode;
   filaments: string[];
   onColorMode: (mode: ColorMode) => void;
+  ruler: RulerUnit;
+  onRuler: (unit: RulerUnit) => void;
   onScrub: (layer: number) => void;
   onLive: (on: boolean) => void;
   onGhost: (on: boolean) => void;
@@ -101,6 +103,30 @@ export function BottomBar(props: {
           )}
           <Toggle label="Show remaining layers" checked={props.ghost} disabled={disabled} onChange={props.onGhost} />
           <div className="h-6 w-px bg-rule" />
+          <div
+            role="group"
+            aria-label="Ruler units"
+            title="Rulers on the bed"
+            className="flex h-8 items-center rounded-[4px] bg-soft p-0.5 text-caption font-semibold"
+          >
+            <span className="px-1.5 text-muted" aria-hidden>
+              <RulerIcon />
+            </span>
+            {(["off", "mm", "cm"] as const).map((u) => (
+              <button
+                key={u}
+                type="button"
+                aria-pressed={props.ruler === u}
+                onClick={() => props.onRuler(u)}
+                className={cx(
+                  "h-7 rounded-[3px] px-2",
+                  props.ruler === u ? "bg-bg shadow-sm" : "text-muted hover:text-ink",
+                )}
+              >
+                {u === "off" ? "Off" : u}
+              </button>
+            ))}
+          </div>
           <IconButton label="Reset view" onClick={props.onResetView}>
             <Icon.Reset />
           </IconButton>
@@ -124,5 +150,14 @@ export function BottomBar(props: {
         </div>
       </Panel>
     </div>
+  );
+}
+
+function RulerIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+      <rect x="1.5" y="5" width="13" height="6" rx="1" />
+      <path d="M4.5 5v2.5M7 5v1.5M9.5 5v2.5M12 5v1.5" />
+    </svg>
   );
 }

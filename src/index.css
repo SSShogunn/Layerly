@@ -175,3 +175,21 @@
 .animate-spin-slow {
   animation: spin 0.9s linear infinite;
 }
+
+/* Ruler labels drawn over the 3D view (viewer.ts). */
+.ruler-label,
+.ruler-axis {
+  font: 600 10px/1 ui-sans-serif, system-ui, sans-serif;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  white-space: nowrap;
+  user-select: none;
+  text-shadow: 0 0 3px var(--bg), 0 0 3px var(--bg);
+}
+.ruler-axis {
+  font-size: 11px;
+  font-weight: 800;
+}
+.ruler-x { color: #e5484d; }
+.ruler-y { color: #30a46c; }
+.ruler-z { color: #3e63dd; }

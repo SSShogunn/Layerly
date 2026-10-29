@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import { CSS2DObject, CSS2DRenderer } from "three/examples/jsm/renderers/CSS2DRenderer.js";
 import { FEATURES } from "./gcode";
 import type { Model } from "./types";
 
@@ -161,6 +162,9 @@ const THEMES: Record<"dark" | "light", ThemeColors> = {
 };
 
 export type ColorMode = "filament" | "feature";
+export type RulerUnit = "off" | "mm" | "cm";
+
+const AXIS_COLORS = { x: 0xe5484d, y: 0x30a46c, z: 0x3e63dd };
 
 export class Viewer {
   private container: HTMLElement;
@@ -172,6 +176,9 @@ export class Viewer {
   private frame = 0;
 
   private bedGroup = new THREE.Group();
+  private rulerGroup = new THREE.Group();
+  private labels: CSS2DRenderer;
+  private unit: RulerUnit = "mm";
   private bedSize = { w: 180, h: 180 };
   private dark = true;
 
@@ -221,6 +228,18 @@ export class Viewer {
     canvas.style.outline = "none";
     container.appendChild(canvas);
 
+    this.labels = new CSS2DRenderer();
+    const ld = this.labels.domElement;
+    ld.style.position = "absolute";
+    ld.style.inset = "0";
+    ld.style.pointerEvents = "none";
+    // CSS2DRenderer gives each label a z-index for depth sorting; keep those
+    // inside this layer so labels never draw over the UI panels.
+    ld.style.zIndex = "0";
+    ld.style.isolation = "isolate";
+    ld.style.overflow = "hidden";
+    container.appendChild(ld);
+
     this.solidMat = new THREE.ShaderMaterial({
       vertexShader: VERT,
       fragmentShader: FRAG,
@@ -244,6 +263,7 @@ export class Viewer {
     this.controls.addEventListener("change", this.requestRender);
 
     this.scene.add(this.bedGroup);
+    this.scene.add(this.rulerGroup);
     this.dark = window.matchMedia?.("(prefers-color-scheme: dark)").matches ?? true;
     this.buildBed();
 
@@ -294,6 +314,14 @@ export class Viewer {
     this.requestRender();
   }
 
+  /** Rulers with tick labels along X, Y and Z, in mm or cm; "off" hides them. */
+  setRulers(unit: RulerUnit): void {
+    if (unit === this.unit) return;
+    this.unit = unit;
+    this.buildRulers();
+    this.requestRender();
+  }
+
   resetCamera(): void {
     const box = new THREE.Box3();
     if (this.model && !this.bounds.isEmpty()) box.copy(this.bounds);
@@ -320,6 +348,8 @@ export class Viewer {
     this.controls.dispose();
     this.clearModel(true);
     this.clearBed();
+    this.clearRulers();
+    this.labels.domElement.remove();
     this.box.dispose();
     this.solidMat.dispose();
     this.ghostMat.dispose();
@@ -343,6 +373,7 @@ export class Viewer {
     this.camera.far = dist + span * 4;
     this.camera.updateProjectionMatrix();
     this.renderer.render(this.scene, this.camera);
+    this.labels.render(this.scene, this.camera);
     if (moving) this.requestRender();
   };
 
@@ -351,6 +382,7 @@ export class Viewer {
     const h = Math.max(1, this.container.clientHeight);
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     this.renderer.setSize(w, h, false);
+    this.labels.setSize(w, h);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
     this.requestRender();
@@ -509,6 +541,81 @@ export class Viewer {
       shadow.position.set(center.x, center.y, -0.005);
       this.bedGroup.add(shadow);
     }
+    this.buildRulers();
+  }
+
+  private clearRulers() {
+    // Removing a CSS2DObject also removes its element from the page.
+    for (const child of [...this.rulerGroup.children]) {
+      this.rulerGroup.remove(child);
+      if (child instanceof THREE.LineSegments) {
+        child.geometry.dispose();
+        (child.material as THREE.Material).dispose();
+      }
+    }
+  }
+
+  /**
+   * X along the front edge, Y along the left edge, Z standing at the back-right
+   * corner (clear of the X and Y labels from the default view). Minor ticks every 5 mm, major every 10 mm; Z adapts to the model height.
+   */
+  private buildRulers() {
+    this.clearRulers();
+    if (this.unit === "off") return;
+    const t = this.dark ? THEMES.dark : THEMES.light;
+    const { w, h } = this.bedSize;
+    const cm = this.unit === "cm";
+    const fmt = (mm: number) => (cm ? String(Math.round(mm) / 10) : String(Math.round(mm)));
+    const z0 = 0.01;
+
+    const ticks: number[] = [];
+    const label = (text: string, x: number, y: number, z: number, cls = "ruler-label") => {
+      const el = document.createElement("div");
+      el.className = cls;
+      el.textContent = text;
+      const o = new CSS2DObject(el);
+      o.position.set(x, y, z);
+      this.rulerGroup.add(o);
+    };
+    const axis = (pts: number[], color: number) => {
+      const g = new THREE.BufferGeometry();
+      g.setAttribute("position", new THREE.Float32BufferAttribute(pts, 3));
+      this.rulerGroup.add(new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color })));
+    };
+    const labelEvery = Math.max(w, h) > 120 ? 20 : 10;
+
+    // X: front edge (y = 0), ticks pointing toward the viewer.
+    for (let x = 0; x <= w + 1e-3; x += 5) {
+      const major = x % 10 === 0;
+      ticks.push(x, 0, z0, x, major ? -3 : -1.5, z0);
+      if (x % labelEvery === 0) label(fmt(x), x, -7, 0);
+    }
+    // Y: left edge (x = 0).
+    for (let y = 0; y <= h + 1e-3; y += 5) {
+      const major = y % 10 === 0;
+      ticks.push(0, y, z0, major ? -3 : -1.5, y, z0);
+      if (y % labelEvery === 0 && y > 0) label(fmt(y), -7, y, 0);
+    }
+
+    // Z: from the bed to just above the model.
+    const top = this.model && !this.bounds.isEmpty() ? this.bounds.max.z : 40;
+    const step = [1, 2, 5, 10, 20, 50].find((s) => top / s <= 6) ?? 50;
+    const zMax = Math.max(step, Math.ceil(top / step) * step);
+    const minor = step / 2;
+    for (let z = 0; z <= zMax + 1e-3; z += minor) {
+      const major = Math.abs(z / step - Math.round(z / step)) < 1e-6;
+      ticks.push(w, h, z, w + (major ? 3 : 1.5), h, z);
+      if (major && z > 0) label(fmt(z), w + 7, h, z);
+    }
+    axis(ticks, t.border);
+
+    axis([0, 0, z0, w, 0, z0], AXIS_COLORS.x);
+    axis([0, 0, z0, 0, h, z0], AXIS_COLORS.y);
+    axis([w, h, 0, w, h, zMax], AXIS_COLORS.z);
+    const u = cm ? "cm" : "mm";
+    label(`X ${u}`, w + 9, 0, 0, "ruler-axis ruler-x");
+    label(`Y ${u}`, 0, h + 9, 0, "ruler-axis ruler-y");
+    label(`Z ${u}`, w, h, zMax + Math.max(3, step * 0.4), "ruler-axis ruler-z");
   }
 }
 

@@ -4,7 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import type { DownloadProgress as Progress, Model, Settings, Status } from "./types";
 import { decodeModel } from "./gcode";
-import { Viewer, type ColorMode } from "./viewer";
+import { Viewer, type ColorMode, type RulerUnit } from "./viewer";
 import { StatusCard } from "./components/StatusCard";
 import { BottomBar } from "./components/BottomBar";
 import { SettingsDialog } from "./components/SettingsDialog";
@@ -67,6 +67,14 @@ export default function App() {
   const [live, setLive] = useState(true);
   const [scrub, setScrub] = useState(0);
   const [ghost, setGhost] = useState(true);
+  const [ruler, setRuler] = useState<RulerUnit>(() => {
+    try {
+      const v = localStorage.getItem("ruler");
+      return v === "off" || v === "cm" ? v : "mm";
+    } catch {
+      return "mm";
+    }
+  });
   const [colorMode, setColorMode] = useState<ColorMode>(() => {
     try {
       return localStorage.getItem("colorMode") === "feature" ? "feature" : "filament";
@@ -220,6 +228,14 @@ export default function App() {
       /* storage unavailable */
     }
   }, [colorMode]);
+  useEffect(() => {
+    viewerRef.current?.setRulers(ruler);
+    try {
+      localStorage.setItem("ruler", ruler);
+    } catch {
+      /* storage unavailable */
+    }
+  }, [ruler]);
 
   const scrubTo = useCallback((layer: number) => {
     setLive(false);
@@ -387,6 +403,8 @@ export default function App() {
         colorMode={colorMode}
         filaments={model?.colors ?? []}
         onColorMode={setColorMode}
+        ruler={ruler}
+        onRuler={setRuler}
         onScrub={scrubTo}
         onLive={setLiveMode}
         onGhost={setGhost}
