@@ -102,7 +102,7 @@ export default function App() {
       .then((s) => {
         if (cancelled) return;
         setSettings(s);
-        if (!s.host || !s.accessCode || !s.serial) setSettingsOpen(true);
+        if (!s.accessCode || !s.serial) setSettingsOpen(true);
       })
       .catch(() => {
         if (cancelled) return;

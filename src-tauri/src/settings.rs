@@ -20,9 +20,10 @@ impl Default for Settings {
 }
 
 impl Settings {
-    /// True when there is enough to try connecting.
+    /// True when there is enough to try connecting. The host is optional:
+    /// the printer is found on the network by its serial number.
     pub fn is_complete(&self) -> bool {
-        !self.host.is_empty() && !self.access_code.is_empty() && !self.serial.is_empty()
+        !self.access_code.is_empty() && !self.serial.is_empty()
     }
 
     pub fn trimmed(self) -> Settings {

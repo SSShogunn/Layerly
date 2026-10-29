@@ -87,20 +87,14 @@ export function SettingsDialog(props: {
           </IconButton>
         </div>
         <p className="mt-1 text-caption text-muted">
-          Find these on the printer: Settings → LAN Only Mode (IP, access code) and Settings → Device (serial)
+          Find these on the printer: Settings → LAN Only Mode (access code) and Settings → Device (serial). Layerly finds the printer on your network by itself.
         </p>
 
         <div className="mt-4 space-y-3">
           <Field
-            label="Host / IP"
-            value={s.host}
-            placeholder="192.168.1.50"
-            autoFocus
-            onChange={(host) => setS({ ...s, host })}
-          />
-          <Field
             label="Access code"
             value={s.accessCode}
+            autoFocus
             placeholder="8 characters"
             type={showCode ? "text" : "password"}
             onChange={(accessCode) => setS({ ...s, accessCode })}
@@ -121,6 +115,12 @@ export function SettingsDialog(props: {
             value={s.serial}
             placeholder="0309DA…"
             onChange={(serial) => setS({ ...s, serial })}
+          />
+          <Field
+            label="IP address (optional)"
+            value={s.host}
+            placeholder="Found automatically"
+            onChange={(host) => setS({ ...s, host })}
           />
         </div>
 

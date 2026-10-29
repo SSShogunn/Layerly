@@ -19,12 +19,12 @@ A1 mini; other Bambu printers that speak the same LAN protocol should work.
 ## Setup
 
 1. On the printer, turn on **LAN Only Mode** (Settings → LAN Only Mode).
-2. Note the **IP address** and **access code** from that screen, and the **serial number**
-   from Settings → Device.
-3. Open Layerly and enter the three values in the settings dialog.
+2. Note the **access code** from that screen, and the **serial number** from Settings → Device.
+3. Open Layerly and enter both in the settings dialog. The IP address is optional: Layerly
+   finds the printer on your network by its serial number.
 
 Your computer and the printer must be on the same network. If the printer's IP address
-changes, Layerly finds it again by serial number and saves the new address.
+changes, Layerly finds it again and saves the new address.
 
 ## Development
 

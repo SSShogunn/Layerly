@@ -244,6 +244,24 @@ async fn run(app: AppHandle, inner: Shared, mut settings: Settings) {
     let report = format!("device/{}/report", settings.serial);
     let request = format!("device/{}/request", settings.serial);
     loop {
+        if settings.host.is_empty() {
+            last_scan = Some(std::time::Instant::now());
+            let serial = settings.serial.clone();
+            let found = tauri::async_runtime::spawn_blocking(move || crate::discover::find(&serial, ""))
+                .await
+                .ok()
+                .flatten();
+            let Some(ip) = found else {
+                update(&app, &inner, |i| {
+                    i.connection = "error";
+                    i.error = Some("Can't find the printer on this network (check the serial number and LAN mode)".into());
+                });
+                tokio::time::sleep(RETRY).await;
+                continue;
+            };
+            settings.host = ip.clone();
+            crate::remember_host(&app, &ip);
+        }
         let (client, mut events) = AsyncClient::new(options(&settings), 16);
         {
             let mut i = inner.lock().unwrap();
